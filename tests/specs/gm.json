@@ -1,0 +1,32 @@
+[
+  {
+    "name": "first GM tap sends a greeting",
+    "steps": [
+      {
+        "send": { "callback": "gm:tap" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "sendMessage", "payload": { "text": "☀️ Rise and shine, Test! Hope today brings you joy." } }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "repeat GM tap shows only callback confirmation",
+    "steps": [
+      {
+        "send": { "callback": "gm:tap" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "sendMessage" }
+        ]
+      },
+      {
+        "send": { "callback": "gm:tap" },
+        "expect": [
+          { "method": "answerCallbackQuery", "payload": { "text": "You've already checked in today ☀️" } }
+        ]
+      }
+    ]
+  }
+]
