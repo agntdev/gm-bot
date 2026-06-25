@@ -37,6 +37,8 @@ composer.callbackQuery("gm:tap", async (ctx) => {
 
   await ctx.answerCallbackQuery();
   await store.markTodayDone(user.id, today);
+  await store.upsertUser(user.id, user.first_name);
+  await store.addEvent(user.id, new Date().toISOString());
 
   let stats = await store.getStats(user.id);
   const now: UserStats = {
