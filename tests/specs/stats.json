@@ -1,0 +1,62 @@
+[
+  {
+    "name": "/stats with no GM history shows empty state",
+    "steps": [
+      {
+        "send": { "text": "/stats" },
+        "expect": [
+          { "method": "sendMessage", "payload": { "text": "No GM stats yet — tap 🌅 GM to start!" } }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "/stats after a GM tap shows accumulated stats",
+    "steps": [
+      {
+        "send": { "callback": "gm:tap" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "sendMessage" }
+        ]
+      },
+      {
+        "send": { "text": "/stats" },
+        "expect": [
+          { "method": "sendMessage" }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "stats button from menu shows empty state when no GM",
+    "steps": [
+      {
+        "send": { "callback": "stats:show" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "editMessageText", "payload": { "text": "No GM stats yet — tap 🌅 GM to start!" } }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "stats button from menu shows stats after GM",
+    "steps": [
+      {
+        "send": { "callback": "gm:tap" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "sendMessage" }
+        ]
+      },
+      {
+        "send": { "callback": "stats:show" },
+        "expect": [
+          { "method": "answerCallbackQuery" },
+          { "method": "editMessageText" }
+        ]
+      }
+    ]
+  }
+]
