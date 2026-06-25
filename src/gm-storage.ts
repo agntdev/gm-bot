@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 interface RedisLike {
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<unknown>;
+  del(key: string): Promise<unknown>;
   keys(pattern: string): Promise<string[]>;
 }
 
@@ -12,6 +13,11 @@ export interface UserStats {
   current_streak_days: number;
 }
 
+export interface UserRecord {
+  telegram_id: number;
+  first_name: string;
+}
+
 let _client: GmStore | undefined;
 
 export interface GmStore {
@@ -19,27 +25,10 @@ export interface GmStore {
   setStats(userId: number, stats: UserStats): Promise<void>;
   isTodayDone(userId: number, dateUtc: string): Promise<boolean>;
   markTodayDone(userId: number, dateUtc: string): Promise<void>;
-}
-
-class MemoryGmStore implements GmStore {
-  private stats = new Map<number, UserStats>();
-  private taps = new Map<string, boolean>();
-
-  async getStats(userId: number): Promise<UserStats | null> {
-    return this.stats.get(userId) ?? null;
-  }
-
-  async setStats(userId: number, stats: UserStats): Promise<void> {
-    this.stats.set(userId, stats);
-  }
-
-  async isTodayDone(userId: number, dateUtc: string): Promise<boolean> {
-    return this.taps.get(`tap:${userId}:${dateUtc}`) === true;
-  }
-
-  async markTodayDone(userId: number, dateUtc: string): Promise<void> {
-    this.taps.set(`tap:${userId}:${dateUtc}`, true);
-  }
+  addEvent(userId: number, timestampUtc: string): Promise<void>;
+  getEvents(userId: number, limit?: number): Promise<string[]>;
+  upsertUser(userId: number, firstName: string): Promise<void>;
+  getUser(userId: number): Promise<UserRecord | null>;
 }
 
 class RedisGmStore implements GmStore {
@@ -71,6 +60,45 @@ class RedisGmStore implements GmStore {
   async markTodayDone(userId: number, dateUtc: string): Promise<void> {
     await this.client.set(this.k(`tap:${userId}:${dateUtc}`), "1");
   }
+
+  async addEvent(userId: number, timestampUtc: string): Promise<void> {
+    const event = JSON.stringify({ user_id: userId, timestamp_utc: timestampUtc });
+    await this.client.set(this.k(`event:${userId}:${timestampUtc}`), event);
+  }
+
+  async getEvents(userId: number, limit = 50): Promise<string[]> {
+    const keys = await this.client.keys(this.k(`event:${userId}:*`));
+    keys.sort();
+    const result: string[] = [];
+    const take = keys.slice(-Math.min(limit, keys.length));
+    for (const key of take) {
+      const raw = await this.client.get(key);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as { user_id: number; timestamp_utc: string };
+          result.push(parsed.timestamp_utc);
+        } catch {
+          // skip corrupt entries
+        }
+      }
+    }
+    return result;
+  }
+
+  async upsertUser(userId: number, firstName: string): Promise<void> {
+    const record: UserRecord = { telegram_id: userId, first_name: firstName };
+    await this.client.set(this.k(`user:${userId}`), JSON.stringify(record));
+  }
+
+  async getUser(userId: number): Promise<UserRecord | null> {
+    const raw = await this.client.get(this.k(`user:${userId}`));
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as UserRecord;
+    } catch {
+      return null;
+    }
+  }
 }
 
 function defaultRedisClient(url: string): RedisLike {
@@ -82,16 +110,62 @@ function defaultRedisClient(url: string): RedisLike {
 
 export function getGmStore(): GmStore {
   if (_client) return _client;
-  if (process.env.REDIS_URL) {
-    _client = new RedisGmStore(defaultRedisClient(process.env.REDIS_URL));
-  } else {
-    _client = new MemoryGmStore();
+  const url = process.env.REDIS_URL;
+  if (!url) {
+    throw new Error("REDIS_URL must be set — durable GM data requires persistent storage");
   }
+  _client = new RedisGmStore(defaultRedisClient(url));
   return _client;
 }
 
 export function _resetGmStore(): void {
   _client = undefined;
+}
+
+export function _setGmStore(store: GmStore): void {
+  _client = store;
+}
+
+export class _TestGmStore implements GmStore {
+  private stats = new Map<number, UserStats>();
+  private taps = new Map<string, boolean>();
+  private events = new Map<number, string[]>();
+  private users = new Map<number, UserRecord>();
+
+  async getStats(userId: number): Promise<UserStats | null> {
+    return this.stats.get(userId) ?? null;
+  }
+
+  async setStats(userId: number, stats: UserStats): Promise<void> {
+    this.stats.set(userId, stats);
+  }
+
+  async isTodayDone(userId: number, dateUtc: string): Promise<boolean> {
+    return this.taps.get(`tap:${userId}:${dateUtc}`) === true;
+  }
+
+  async markTodayDone(userId: number, dateUtc: string): Promise<void> {
+    this.taps.set(`tap:${userId}:${dateUtc}`, true);
+  }
+
+  async addEvent(userId: number, timestampUtc: string): Promise<void> {
+    const list = this.events.get(userId) ?? [];
+    list.push(timestampUtc);
+    this.events.set(userId, list);
+  }
+
+  async getEvents(userId: number, limit = 50): Promise<string[]> {
+    const list = this.events.get(userId) ?? [];
+    return list.slice(-Math.min(limit, list.length));
+  }
+
+  async upsertUser(userId: number, firstName: string): Promise<void> {
+    this.users.set(userId, { telegram_id: userId, first_name: firstName });
+  }
+
+  async getUser(userId: number): Promise<UserRecord | null> {
+    return this.users.get(userId) ?? null;
+  }
 }
 
 export function todayUtc(): string {

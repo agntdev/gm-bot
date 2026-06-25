@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { buildBot } from "../src/bot.js";
 import { runSpecs, parseBotSpecs } from "../src/toolkit/index.js";
-import { _resetGmStore } from "../src/gm-storage.js";
+import { _setGmStore, _TestGmStore, _resetGmStore } from "../src/gm-storage.js";
 
 function loadSpecs(name: string) {
   const raw = JSON.parse(
@@ -19,8 +19,13 @@ function logFailures(suite: Awaited<ReturnType<typeof runSpecs>>) {
   });
 }
 
-async function runOneSpec(name: string, idx: number) {
+function resetStore() {
   _resetGmStore();
+  _setGmStore(new _TestGmStore());
+}
+
+async function runOneSpec(name: string, idx: number) {
+  resetStore();
   const allSpecs = loadSpecs(name);
   const spec = allSpecs[idx];
   return runSpecs(() => buildBot("test-token"), [spec]);
@@ -74,7 +79,7 @@ describe("Stats handler", () => {
 
 describe("/start menu integrity", () => {
   it("/start still works with new handlers loaded", async () => {
-    _resetGmStore();
+    resetStore();
     const specs = loadSpecs("start");
     const suite = await runSpecs(() => buildBot("test-token"), specs);
     logFailures(suite);
@@ -84,7 +89,7 @@ describe("/start menu integrity", () => {
 
 describe("Help handler integrity", () => {
   it("/help still works with new handlers loaded", async () => {
-    _resetGmStore();
+    resetStore();
     const specs = loadSpecs("help");
     const suite = await runSpecs(() => buildBot("test-token"), specs);
     logFailures(suite);
