@@ -8,7 +8,7 @@
           {
             "method": "sendMessage",
             "payload": {
-              "text": "ℹ️ Tap /start to open the menu, then pick what you want from the buttons.\n\nEverything in this bot is reachable by tapping — you don't need to remember any commands."
+              "text": "🌅 GM Bot — track your daily morning check-ins!\n\nTap 🌅 GM once per UTC day to check in. If you tap again the same day, you'll see a quiet confirmation — no spam.\n\n📊 Stats shows your total GM count, current streak, and last check-in date. A streak is the number of consecutive UTC days you've checked in. Missing a day resets it.\n\nCommands:\n/start — open the main menu\n/stats — view your GM statistics\n/help — show this explanation"
             }
           }
         ]

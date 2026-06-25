@@ -23,7 +23,10 @@ const composer = new Composer<Ctx>();
 
 composer.callbackQuery("gm:tap", async (ctx) => {
   const user = ctx.from;
-  if (!user) return;
+  if (!user) {
+    await ctx.answerCallbackQuery({ text: "Could not identify you." });
+    return;
+  }
 
   const today = todayUtc();
   const yesterday = yesterdayUtc(today);
