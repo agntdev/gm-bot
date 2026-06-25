@@ -31,28 +31,36 @@ const backToMenu = inlineKeyboard([[inlineButton("⬅️ Back to menu", "menu:ma
 const composer = new Composer<Ctx>();
 
 composer.command("stats", async (ctx) => {
-  const store = getGmStore();
-  const stats = await store.getStats(ctx.from?.id ?? 0);
-  if (!stats) {
-    await ctx.reply(emptyStats);
-  } else {
-    await ctx.reply(
-      buildStatsMessage(stats.total_gm_count, stats.current_streak_days, stats.last_gm_date_utc),
-    );
+  try {
+    const store = getGmStore();
+    const stats = await store.getStats(ctx.from?.id ?? 0);
+    if (!stats) {
+      await ctx.reply(emptyStats);
+    } else {
+      await ctx.reply(
+        buildStatsMessage(stats.total_gm_count, stats.current_streak_days, stats.last_gm_date_utc),
+      );
+    }
+  } catch {
+    await ctx.reply("Couldn't load your stats right now — please try again.");
   }
 });
 
 composer.callbackQuery("stats:show", async (ctx) => {
   await ctx.answerCallbackQuery();
-  const store = getGmStore();
-  const stats = await store.getStats(ctx.from?.id ?? 0);
-  if (!stats) {
-    await ctx.editMessageText(emptyStats, { reply_markup: backToMenu });
-  } else {
-    await ctx.editMessageText(
-      buildStatsMessage(stats.total_gm_count, stats.current_streak_days, stats.last_gm_date_utc),
-      { reply_markup: backToMenu },
-    );
+  try {
+    const store = getGmStore();
+    const stats = await store.getStats(ctx.from?.id ?? 0);
+    if (!stats) {
+      await ctx.editMessageText(emptyStats, { reply_markup: backToMenu });
+    } else {
+      await ctx.editMessageText(
+        buildStatsMessage(stats.total_gm_count, stats.current_streak_days, stats.last_gm_date_utc),
+        { reply_markup: backToMenu },
+      );
+    }
+  } catch {
+    await ctx.editMessageText("Couldn't load your stats right now — please try again.", { reply_markup: backToMenu });
   }
 });
 

@@ -25,6 +25,7 @@ export interface GmStore {
   getStats(userId: number): Promise<UserStats | null>;
   setStats(userId: number, stats: UserStats): Promise<void>;
   tryMarkTodayDone(userId: number, dateUtc: string): Promise<boolean>;
+  unmarkToday(userId: number, dateUtc: string): Promise<void>;
   addEvent(userId: number, timestampUtc: string): Promise<void>;
   getEvents(userId: number, limit?: number): Promise<string[]>;
   upsertUser(userId: number, firstName: string): Promise<void>;
@@ -63,6 +64,10 @@ class RedisGmStore implements GmStore {
     return result === "OK";
   }
 
+  async unmarkToday(userId: number, dateUtc: string): Promise<void> {
+    await this.client.del(this.k(`tap:${userId}:${dateUtc}`));
+  }
+
   async addEvent(userId: number, timestampUtc: string): Promise<void> {
     await this.client.lpush(this.k(`events:${userId}`), timestampUtc);
   }
@@ -70,8 +75,8 @@ class RedisGmStore implements GmStore {
   async getEvents(userId: number, limit = 50): Promise<string[]> {
     const events = await this.client.lrange(
       this.k(`events:${userId}`),
-      -Math.min(limit, 10000),
-      -1,
+      0,
+      Math.min(limit, 10000) - 1,
     );
     return events;
   }
@@ -136,6 +141,10 @@ export class _TestGmStore implements GmStore {
     if (this.taps.has(key)) return false;
     this.taps.set(key, true);
     return true;
+  }
+
+  async unmarkToday(userId: number, dateUtc: string): Promise<void> {
+    this.taps.delete(`tap:${userId}:${dateUtc}`);
   }
 
   async addEvent(userId: number, timestampUtc: string): Promise<void> {
