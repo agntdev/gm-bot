@@ -6,6 +6,7 @@ interface RedisLike {
   del(key: string): Promise<unknown>;
   lpush(key: string, ...values: string[]): Promise<number>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
+  eval(script: string, numKeys: number, ...keysAndArgs: unknown[]): Promise<unknown>;
 }
 
 export interface UserStats {
@@ -30,6 +31,7 @@ export interface GmStore {
   getEvents(userId: number, limit?: number): Promise<string[]>;
   upsertUser(userId: number, firstName: string): Promise<void>;
   getUser(userId: number): Promise<UserRecord | null>;
+  atomicRecordTap(userId: number, dateUtc: string, firstName: string, yesterday: string, timestampUtc: string): Promise<UserStats | null>;
 }
 
 class RedisGmStore implements GmStore {
@@ -37,6 +39,71 @@ class RedisGmStore implements GmStore {
 
   private k(key: string): string {
     return this.prefix + key;
+  }
+
+  // Lua script: atomically records a GM tap (mark today + update stats + add event + upsert user).
+  // Returns nil if already tapped today, else returns the new stats JSON string.
+  private static readonly ATOMIC_RECORD_TAP = `
+local tap_key   = KEYS[1]
+local stats_key = KEYS[2]
+local events_key = KEYS[3]
+local user_key  = KEYS[4]
+
+local date_utc      = ARGV[1]
+local first_name    = ARGV[2]
+local yesterday     = ARGV[3]
+local timestamp_utc = ARGV[4]
+local telegram_id   = tonumber(ARGV[5])
+
+local result = redis.call('SET', tap_key, '1', 'NX', 'EX', 86400)
+if not result then
+  return nil
+end
+
+local total = 1
+local streak = 1
+
+local raw = redis.call('GET', stats_key)
+if raw then
+  local stats = cjson.decode(raw)
+  if stats.last_gm_date_utc == yesterday then
+    total  = stats.total_gm_count + 1
+    streak = stats.current_streak_days + 1
+  elseif stats.last_gm_date_utc ~= date_utc then
+    total  = stats.total_gm_count + 1
+    streak = 1
+  else
+    total  = stats.total_gm_count
+    streak = stats.current_streak_days
+  end
+end
+
+local new_stats = cjson.encode({
+  total_gm_count = total,
+  last_gm_date_utc = date_utc,
+  current_streak_days = streak,
+})
+
+redis.call('SET', stats_key, new_stats)
+redis.call('LPUSH', events_key, timestamp_utc)
+redis.call('SET', user_key, cjson.encode({
+  telegram_id = telegram_id,
+  first_name = first_name,
+}))
+
+return new_stats`;
+
+  async atomicRecordTap(userId: number, dateUtc: string, firstName: string, yesterday: string, timestampUtc: string): Promise<UserStats | null> {
+    const keys = [
+      this.k(`tap:${userId}:${dateUtc}`),
+      this.k(`stats:${userId}`),
+      this.k(`events:${userId}`),
+      this.k(`user:${userId}`),
+    ];
+    const args = [dateUtc, firstName, yesterday, timestampUtc, String(userId)];
+    const result = await this.client.eval(RedisGmStore.ATOMIC_RECORD_TAP, keys.length, ...keys, ...args);
+    if (result === null || result === undefined) return null;
+    return JSON.parse(result as string) as UserStats;
   }
 
   async getStats(userId: number): Promise<UserStats | null> {
@@ -164,6 +231,37 @@ export class _TestGmStore implements GmStore {
 
   async getUser(userId: number): Promise<UserRecord | null> {
     return this.users.get(userId) ?? null;
+  }
+
+  async atomicRecordTap(userId: number, dateUtc: string, firstName: string, yesterday: string, timestampUtc: string): Promise<UserStats | null> {
+    const first = await this.tryMarkTodayDone(userId, dateUtc);
+    if (!first) return null;
+
+    await this.upsertUser(userId, firstName);
+    await this.addEvent(userId, timestampUtc);
+
+    const stats = await this.getStats(userId);
+    const now: UserStats = {
+      total_gm_count: 1,
+      last_gm_date_utc: dateUtc,
+      current_streak_days: 1,
+    };
+
+    if (stats) {
+      if (stats.last_gm_date_utc === yesterday) {
+        now.total_gm_count = stats.total_gm_count + 1;
+        now.current_streak_days = stats.current_streak_days + 1;
+      } else if (stats.last_gm_date_utc === dateUtc) {
+        now.total_gm_count = stats.total_gm_count;
+        now.current_streak_days = stats.current_streak_days;
+      } else {
+        now.total_gm_count = stats.total_gm_count + 1;
+        now.current_streak_days = 1;
+      }
+    }
+
+    await this.setStats(userId, now);
+    return now;
   }
 }
 

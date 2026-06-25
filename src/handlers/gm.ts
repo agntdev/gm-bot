@@ -5,7 +5,6 @@ import {
   getGmStore,
   todayUtc,
   yesterdayUtc,
-  type UserStats,
 } from "../gm-storage.js";
 
 registerMainMenuItem({ label: "🌅 GM", data: "gm:tap", order: 10 });
@@ -27,51 +26,33 @@ composer.callbackQuery("gm:tap", async (ctx) => {
   if (!user) return;
 
   const today = todayUtc();
-  let marked = false;
+  const yesterday = yesterdayUtc(today);
+  const timestamp = new Date().toISOString();
 
   try {
     const store = getGmStore();
-    const firstTapToday = await store.tryMarkTodayDone(user.id, today);
-    if (!firstTapToday) {
+    const newStats = await store.atomicRecordTap(
+      user.id,
+      today,
+      user.first_name,
+      yesterday,
+      timestamp,
+    );
+
+    if (!newStats) {
       await ctx.answerCallbackQuery({ text: "You've already checked in today ☀️", show_alert: false });
       return;
     }
-    marked = true;
-
-    await store.upsertUser(user.id, user.first_name);
-    await store.addEvent(user.id, new Date().toISOString());
-
-    let stats = await store.getStats(user.id);
-    const now: UserStats = {
-      total_gm_count: 1,
-      last_gm_date_utc: today,
-      current_streak_days: 1,
-    };
-
-    if (stats) {
-      const yesterday = yesterdayUtc(today);
-      if (stats.last_gm_date_utc === yesterday) {
-        now.total_gm_count = stats.total_gm_count + 1;
-        now.current_streak_days = stats.current_streak_days + 1;
-      } else if (stats.last_gm_date_utc === today) {
-        now.total_gm_count = stats.total_gm_count;
-        now.current_streak_days = stats.current_streak_days;
-      } else {
-        now.total_gm_count = stats.total_gm_count + 1;
-        now.current_streak_days = 1;
-      }
-    }
-
-    await store.setStats(user.id, now);
 
     await ctx.answerCallbackQuery();
 
-    const greeting = pickGreeting(now.total_gm_count);
+    const greeting = pickGreeting(newStats.total_gm_count);
     await ctx.reply(greeting(user.first_name));
   } catch {
-    if (marked) {
-      const store = getGmStore();
-      try { await store.unmarkToday(user.id, today); } catch { /* best-effort rollback */ }
+    try {
+      await ctx.answerCallbackQuery({ text: "Something went wrong — please try again." });
+    } catch {
+      /* callback may already be answered or expired */
     }
     await ctx.reply("Something went wrong — please try again.");
   }
