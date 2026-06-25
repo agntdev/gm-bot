@@ -28,15 +28,14 @@ composer.callbackQuery("gm:tap", async (ctx) => {
 
   const store = getGmStore();
   const today = todayUtc();
-  const alreadyDone = await store.isTodayDone(user.id, today);
 
-  if (alreadyDone) {
+  const firstTapToday = await store.tryMarkTodayDone(user.id, today);
+  if (!firstTapToday) {
     await ctx.answerCallbackQuery({ text: "You've already checked in today ☀️", show_alert: false });
     return;
   }
 
   await ctx.answerCallbackQuery();
-  await store.markTodayDone(user.id, today);
   await store.upsertUser(user.id, user.first_name);
   await store.addEvent(user.id, new Date().toISOString());
 

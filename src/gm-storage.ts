@@ -2,9 +2,10 @@ import { createRequire } from "node:module";
 
 interface RedisLike {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<unknown>;
+  set(key: string, value: string, ...args: unknown[]): Promise<unknown>;
   del(key: string): Promise<unknown>;
-  keys(pattern: string): Promise<string[]>;
+  lpush(key: string, ...values: string[]): Promise<number>;
+  lrange(key: string, start: number, stop: number): Promise<string[]>;
 }
 
 export interface UserStats {
@@ -23,8 +24,7 @@ let _client: GmStore | undefined;
 export interface GmStore {
   getStats(userId: number): Promise<UserStats | null>;
   setStats(userId: number, stats: UserStats): Promise<void>;
-  isTodayDone(userId: number, dateUtc: string): Promise<boolean>;
-  markTodayDone(userId: number, dateUtc: string): Promise<void>;
+  tryMarkTodayDone(userId: number, dateUtc: string): Promise<boolean>;
   addEvent(userId: number, timestampUtc: string): Promise<void>;
   getEvents(userId: number, limit?: number): Promise<string[]>;
   upsertUser(userId: number, firstName: string): Promise<void>;
@@ -52,37 +52,28 @@ class RedisGmStore implements GmStore {
     await this.client.set(this.k(`stats:${userId}`), JSON.stringify(stats));
   }
 
-  async isTodayDone(userId: number, dateUtc: string): Promise<boolean> {
-    const raw = await this.client.get(this.k(`tap:${userId}:${dateUtc}`));
-    return raw === "1";
-  }
-
-  async markTodayDone(userId: number, dateUtc: string): Promise<void> {
-    await this.client.set(this.k(`tap:${userId}:${dateUtc}`), "1");
+  async tryMarkTodayDone(userId: number, dateUtc: string): Promise<boolean> {
+    const result = await this.client.set(
+      this.k(`tap:${userId}:${dateUtc}`),
+      "1",
+      "NX",
+      "EX",
+      86400,
+    );
+    return result === "OK";
   }
 
   async addEvent(userId: number, timestampUtc: string): Promise<void> {
-    const event = JSON.stringify({ user_id: userId, timestamp_utc: timestampUtc });
-    await this.client.set(this.k(`event:${userId}:${timestampUtc}`), event);
+    await this.client.lpush(this.k(`events:${userId}`), timestampUtc);
   }
 
   async getEvents(userId: number, limit = 50): Promise<string[]> {
-    const keys = await this.client.keys(this.k(`event:${userId}:*`));
-    keys.sort();
-    const result: string[] = [];
-    const take = keys.slice(-Math.min(limit, keys.length));
-    for (const key of take) {
-      const raw = await this.client.get(key);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw) as { user_id: number; timestamp_utc: string };
-          result.push(parsed.timestamp_utc);
-        } catch {
-          // skip corrupt entries
-        }
-      }
-    }
-    return result;
+    const events = await this.client.lrange(
+      this.k(`events:${userId}`),
+      -Math.min(limit, 10000),
+      -1,
+    );
+    return events;
   }
 
   async upsertUser(userId: number, firstName: string): Promise<void> {
@@ -140,12 +131,11 @@ export class _TestGmStore implements GmStore {
     this.stats.set(userId, stats);
   }
 
-  async isTodayDone(userId: number, dateUtc: string): Promise<boolean> {
-    return this.taps.get(`tap:${userId}:${dateUtc}`) === true;
-  }
-
-  async markTodayDone(userId: number, dateUtc: string): Promise<void> {
-    this.taps.set(`tap:${userId}:${dateUtc}`, true);
+  async tryMarkTodayDone(userId: number, dateUtc: string): Promise<boolean> {
+    const key = `tap:${userId}:${dateUtc}`;
+    if (this.taps.has(key)) return false;
+    this.taps.set(key, true);
+    return true;
   }
 
   async addEvent(userId: number, timestampUtc: string): Promise<void> {
